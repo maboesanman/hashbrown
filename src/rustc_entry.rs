@@ -1,6 +1,8 @@
 use self::RustcEntry::*;
+use crate::hash_map::DefaultHashBuilder;
 use crate::map::{make_insert_hash, Drain, HashMap, IntoIter, Iter, IterMut};
 use crate::raw::{Allocator, Bucket, Global, RawTable};
+use core::borrow::Borrow;
 use core::fmt::{self, Debug};
 use core::hash::{BuildHasher, Hash};
 use core::mem;
@@ -31,13 +33,13 @@ where
     /// assert_eq!(letters.get(&'y'), None);
     /// ```
     #[cfg_attr(feature = "inline-more", inline)]
-    pub fn rustc_entry(&mut self, key: K) -> RustcEntry<'_, K, V, A> {
+    pub fn rustc_entry(&mut self, key: K) -> RustcEntry<'_, K, V, A, S> {
         let hash = make_insert_hash(&self.hash_builder, &key);
         if let Some(elem) = self.table.find(hash, |q| q.0.eq(&key)) {
             RustcEntry::Occupied(RustcOccupiedEntry {
                 key: Some(key),
                 elem,
-                table: &mut self.table,
+                map: self,
             })
         } else {
             // Ideally we would put this in VacantEntry::insert, but Entry is not
@@ -48,9 +50,53 @@ where
             RustcEntry::Vacant(RustcVacantEntry {
                 hash,
                 key,
-                table: &mut self.table,
+                map: self,
             })
         }
+    }
+
+    /// get an EntryRef, cloning the key if vacant.
+    pub fn rustc_entry_ref<Q>(&mut self, key: &Q) -> RustcEntryRef<'_, K, V, A, S>
+    where
+        Q: Borrow<K> + Hash + Eq,
+        K: Clone,
+    {
+        todo!()
+    }
+
+    /// get an occupied entry if it exists.
+    pub fn rustc_occupied_entry_ref<Q>(&mut self, key: &Q) -> Option<RustcOccupiedEntryRef<'_, K, V, A, S>>
+    where
+        Q: Borrow<K> + Hash + Eq
+    {
+        todo!()
+    }
+    
+    /// get a vacant entry. return the key if it's occupied.
+    pub fn rustc_vacant_entry(&mut self, key: K) -> Result<RustcVacantEntry<'_, K, V, A, S>, K> {
+        todo!()
+    }
+    
+    /// get a raw entry from a hash and a matcher function.
+    pub fn rustc_raw_entry_from_hash<F>(&mut self, hash: u64, is_match: F) -> RustcRawEntry<'_, K, V, A, S>
+    where
+        for<'b> F: FnMut(&'b K) -> bool
+    {
+        todo!()
+    }
+    
+    /// get a raw entry from a hash and assume it matches.
+    pub fn rustc_raw_entry_from_hash_unchecked(&mut self, hash: u64) -> RustcRawEntry<'_, K, V, A, S>
+    {
+        todo!()
+    }
+    
+    /// get a raw entry from a borrow of a key.
+    pub fn rustc_raw_entry_by_key<Q>(&mut self, key: &Q) -> RustcRawEntry<'_, K, V, A, S>
+    where
+        Q: Borrow<K> + Hash + Eq
+    {
+        todo!()
     }
 }
 
@@ -60,18 +106,18 @@ where
 ///
 /// [`HashMap`]: struct.HashMap.html
 /// [`entry`]: struct.HashMap.html#method.rustc_entry
-pub enum RustcEntry<'a, K, V, A = Global>
+pub enum RustcEntry<'a, K, V, A = Global, S = DefaultHashBuilder>
 where
     A: Allocator + Clone,
 {
     /// An occupied entry.
-    Occupied(RustcOccupiedEntry<'a, K, V, A>),
+    Occupied(RustcOccupiedEntry<'a, K, V, A, S>),
 
     /// A vacant entry.
-    Vacant(RustcVacantEntry<'a, K, V, A>),
+    Vacant(RustcVacantEntry<'a, K, V, A, S>),
 }
 
-impl<K: Debug, V: Debug, A: Allocator + Clone> Debug for RustcEntry<'_, K, V, A> {
+impl<K: Debug, V: Debug, A: Allocator + Clone, S: BuildHasher> Debug for RustcEntry<'_, K, V, A, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             Vacant(ref v) => f.debug_tuple("Entry").field(v).finish(),
@@ -80,35 +126,61 @@ impl<K: Debug, V: Debug, A: Allocator + Clone> Debug for RustcEntry<'_, K, V, A>
     }
 }
 
+/// An entry which borrows its key from the collection when possible.
+pub enum RustcEntryRef<'a, K, V, A = Global,  S = DefaultHashBuilder>
+where
+    A: Allocator + Clone,
+{
+    /// An occupied entry, which does not own a key.
+    Occupied(RustcOccupiedEntryRef<'a, K, V, A, S>),
+
+    /// A vacant entry.
+    Vacant(RustcVacantEntry<'a, K, V, A, S>),
+}
+
+/// An entry which borrows its key from the collection when possible.
+pub enum RustcRawEntry<'a, K, V, A = Global,  S = DefaultHashBuilder>
+where
+    A: Allocator + Clone,
+{
+    /// An occupied entry, which does not own a key.
+    Occupied(RustcOccupiedEntryRef<'a, K, V, A, S>),
+
+    /// A raw vacant entry which needs a key to insert.
+    Vacant(RustcRawVacantEntry<'a, K, V, A, S>),
+}
+
 /// A view into an occupied entry in a `HashMap`.
 /// It is part of the [`RustcEntry`] enum.
 ///
 /// [`RustcEntry`]: enum.RustcEntry.html
-pub struct RustcOccupiedEntry<'a, K, V, A = Global>
+pub struct RustcOccupiedEntry<'a, K, V, A = Global,  S = DefaultHashBuilder>
 where
     A: Allocator + Clone,
 {
     key: Option<K>,
     elem: Bucket<(K, V)>,
-    table: &'a mut RawTable<(K, V), A>,
+    map: &'a mut HashMap<K, V, S, A>
 }
 
-unsafe impl<K, V, A> Send for RustcOccupiedEntry<'_, K, V, A>
+unsafe impl<K, V, S, A> Send for RustcOccupiedEntry<'_, K, V, A, S>
 where
     K: Send,
     V: Send,
+    S: BuildHasher,
     A: Allocator + Clone + Send,
 {
 }
-unsafe impl<K, V, A> Sync for RustcOccupiedEntry<'_, K, V, A>
+unsafe impl<K, V, S, A> Sync for RustcOccupiedEntry<'_, K, V, A, S>
 where
     K: Sync,
     V: Sync,
+    S: BuildHasher,
     A: Allocator + Clone + Sync,
 {
 }
 
-impl<K: Debug, V: Debug, A: Allocator + Clone> Debug for RustcOccupiedEntry<'_, K, V, A> {
+impl<K: Debug, V: Debug, S: BuildHasher, A: Allocator + Clone> Debug for RustcOccupiedEntry<'_, K, V, A, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OccupiedEntry")
             .field("key", self.key())
@@ -117,26 +189,60 @@ impl<K: Debug, V: Debug, A: Allocator + Clone> Debug for RustcOccupiedEntry<'_, 
     }
 }
 
+/// A view into an occupied entry in a `HashMap`.
+/// It borrows it can be used to borrow a key and value from the map.
+pub struct RustcOccupiedEntryRef<'a, K, V, A = Global,  S = DefaultHashBuilder>
+where
+    A: Allocator + Clone,
+{
+    hash: u64,
+    elem: Bucket<(K, V)>,
+    map: &'a mut HashMap<K, V, S, A>
+}
+
 /// A view into a vacant entry in a `HashMap`.
 /// It is part of the [`RustcEntry`] enum.
-///
-/// [`RustcEntry`]: enum.RustcEntry.html
-pub struct RustcVacantEntry<'a, K, V, A = Global>
+pub struct RustcVacantEntry<'a, K, V, A = Global,  S = DefaultHashBuilder>
 where
     A: Allocator + Clone,
 {
     hash: u64,
     key: K,
-    table: &'a mut RawTable<(K, V), A>,
+    map: &'a mut HashMap<K, V, S, A>
 }
 
-impl<K: Debug, V, A: Allocator + Clone> Debug for RustcVacantEntry<'_, K, V, A> {
+impl<K: Debug, V, S, A: Allocator + Clone> Debug for RustcVacantEntry<'_, K, V, A, S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_tuple("VacantEntry").field(self.key()).finish()
     }
 }
 
-impl<'a, K, V, A: Allocator + Clone> RustcEntry<'a, K, V, A> {
+/// A view into a vacant entry in a `HashMap`.
+/// It does not own a key, and therefore must be provided one to insert.
+pub struct RustcRawVacantEntry<'a, K, V, A = Global,  S = DefaultHashBuilder>
+where
+    A: Allocator + Clone,
+{
+    hash: u64,
+    map: &'a mut HashMap<K, V, S, A>
+}
+
+impl<'a, K, V, A: Allocator + Clone, S> RustcEntry<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        match self {
+            Self::Occupied(o) => o.get_hash(),
+            Self::Vacant(v) => v.get_hash(),
+        }
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        match self {
+            Self::Occupied(o) => o.into_collection_mut(),
+            Self::Vacant(v) => v.into_collection_mut(),
+        }
+    }
     /// Sets the value of the entry, and returns a RustcOccupiedEntry.
     ///
     /// # Examples
@@ -149,7 +255,7 @@ impl<'a, K, V, A: Allocator + Clone> RustcEntry<'a, K, V, A> {
     ///
     /// assert_eq!(entry.key(), &"horseyland");
     /// ```
-    pub fn insert(self, value: V) -> RustcOccupiedEntry<'a, K, V, A> {
+    pub fn insert(self, value: V) -> RustcOccupiedEntry<'a, K, V, A, S> {
         match self {
             Vacant(entry) => entry.insert_entry(value),
             Occupied(mut entry) => {
@@ -265,7 +371,7 @@ impl<'a, K, V, A: Allocator + Clone> RustcEntry<'a, K, V, A> {
     }
 }
 
-impl<'a, K, V: Default, A: Allocator + Clone> RustcEntry<'a, K, V, A> {
+impl<'a, K, V: Default, S, A: Allocator + Clone> RustcEntry<'a, K, V, A, S> {
     /// Ensures a value is in the entry by inserting the default value if empty,
     /// and returns a mutable reference to the value in the entry.
     ///
@@ -293,7 +399,52 @@ impl<'a, K, V: Default, A: Allocator + Clone> RustcEntry<'a, K, V, A> {
     }
 }
 
-impl<'a, K, V, A: Allocator + Clone> RustcOccupiedEntry<'a, K, V, A> {
+impl<'a, K, V, A: Allocator + Clone, S> RustcEntryRef<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        match self {
+            Self::Occupied(o) => o.get_hash(),
+            Self::Vacant(v) => v.get_hash(),
+        }
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        match self {
+            Self::Occupied(o) => o.into_collection_mut(),
+            Self::Vacant(v) => v.into_collection_mut(),
+        }
+    }
+}
+
+impl<'a, K, V, A: Allocator + Clone, S> RustcRawEntry<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        match self {
+            Self::Occupied(o) => o.get_hash(),
+            Self::Vacant(v) => v.get_hash(),
+        }
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        match self {
+            Self::Occupied(o) => o.into_collection_mut(),
+            Self::Vacant(v) => v.into_collection_mut(),
+        }
+    }
+}
+
+impl<'a, K, V, A: Allocator + Clone, S> RustcOccupiedEntry<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        todo!()
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        self.map
+    }
     /// Gets a reference to the key in the entry.
     ///
     /// # Examples
@@ -330,7 +481,7 @@ impl<'a, K, V, A: Allocator + Clone> RustcOccupiedEntry<'a, K, V, A> {
     /// ```
     #[cfg_attr(feature = "inline-more", inline)]
     pub fn remove_entry(self) -> (K, V) {
-        unsafe { self.table.remove(self.elem) }
+        unsafe { self.map.table.remove(self.elem) }
     }
 
     /// Gets a reference to the value in the entry.
@@ -520,7 +671,54 @@ impl<'a, K, V, A: Allocator + Clone> RustcOccupiedEntry<'a, K, V, A> {
     }
 }
 
-impl<'a, K, V, A: Allocator + Clone> RustcVacantEntry<'a, K, V, A> {
+impl<'a, K, V, A: Allocator + Clone, S> RustcOccupiedEntryRef<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        self.hash
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        self.map
+    }
+
+    /// get reference to the key
+    pub fn key(&self) -> &K {
+        todo!()
+    }
+
+    /// convert to references into the collection
+    pub fn into_entry(self) -> (&'a K, &'a mut V) {
+        todo!()
+    }
+
+    /// convert to references into the collection
+    pub fn into_key_mut_entry(self) -> (&'a mut K, &'a mut V) {
+        todo!()
+    }
+
+    /// vacate the entry, returning a VacantEntry and a value.
+    pub fn vacate(self) -> (RustcVacantEntry<'a, K, V, A, S>, V) {
+        todo!()
+    }
+
+    /// vacate the entry, returning a RawVacantEntry and a key-value pair.
+    pub fn vacate_raw(self) -> (RustcRawVacantEntry<'a, K, V, A, S>, K, V) {
+        todo!()
+    }
+}
+
+impl<'a, K, V, A: Allocator + Clone, S> RustcVacantEntry<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        self.hash
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        self.map
+    }
+
     /// Gets a reference to the key that would be used when inserting a value
     /// through the `RustcVacantEntry`.
     ///
@@ -575,7 +773,7 @@ impl<'a, K, V, A: Allocator + Clone> RustcVacantEntry<'a, K, V, A> {
     #[cfg_attr(feature = "inline-more", inline)]
     pub fn insert(self, value: V) -> &'a mut V {
         unsafe {
-            let bucket = self.table.insert_no_grow(self.hash, (self.key, value));
+            let bucket = self.map.table.insert_no_grow(self.hash, (self.key, value));
             &mut bucket.as_mut().1
         }
     }
@@ -597,13 +795,60 @@ impl<'a, K, V, A: Allocator + Clone> RustcVacantEntry<'a, K, V, A> {
     /// }
     /// ```
     #[cfg_attr(feature = "inline-more", inline)]
-    pub fn insert_entry(self, value: V) -> RustcOccupiedEntry<'a, K, V, A> {
-        let bucket = unsafe { self.table.insert_no_grow(self.hash, (self.key, value)) };
+    pub fn insert_entry(self, value: V) -> RustcOccupiedEntry<'a, K, V, A, S> {
+        let bucket = unsafe { self.map.table.insert_no_grow(self.hash, (self.key, value)) };
         RustcOccupiedEntry {
             key: None,
             elem: bucket,
-            table: self.table,
+            map: self.map,
         }
+    }
+
+    /// insert `value` into the collection using the owned key, creating an OccupiedEntryRef.
+    /// this replaces the insert_entry method, and does not need to clone keys ever.
+    pub fn occupy(self, value: V) -> RustcOccupiedEntryRef<'a, K, V, A, S> {
+        todo!()
+    }
+    
+    /// take the key, stepping down to a `RawVacantEntry`
+    pub fn into_raw(self) -> (RustcRawVacantEntry<'a, K, V, A, S>, K) {
+        todo!()
+    }
+}
+
+impl<'a, K, V, A: Allocator + Clone, S> RustcRawVacantEntry<'a, K, V, A, S> {
+    /// get the hash of the entry
+    pub fn get_hash(&self) -> u64 {
+        self.hash
+    }
+
+    /// convert back into a mutable reference to a HashMap
+    pub fn into_collection_mut(self) -> &'a mut HashMap<K, V, S, A> {
+        self.map
+    }
+
+    /// insert `key` into the Self, creating a regular VacantEntry if it hashes to the same value this entry was created with.
+    pub fn into_vacant_entry(self, key: K) -> Result<RustcVacantEntry<'a, K, V, A, S>, K> {
+        todo!()
+    }
+        
+    /// insert `key` into the Self, creating a regular VacantEntry. This assumes `key` hashes to the value this entry was created with.
+    pub fn into_vacant_entry_unchecked(self, key: K) -> RustcVacantEntry<'a, K, V, A, S> {
+        let Self {
+            hash,
+            map,
+        } = self;
+        RustcVacantEntry { hash, key, map }
+    }
+
+    /// insert `(key, value)` into the collection, creating an OccupiedEntryRef if it hashes to the same value this entry was created with.
+    pub fn occupy(self, key: K, value: V) -> Result<RustcOccupiedEntryRef<'a, K, V, A, S>, (K, V)> {
+        todo!()
+    }
+
+    /// insert `(key, value)` into the collection, creating an OccupiedEntryRef. This assumes `key` hashes to the value this entry was created with.
+    pub fn occupy_unchecked(self, key: K, value: V) -> RustcOccupiedEntryRef<'a, K, V, A, S> {
+        todo!()
     }
 }
 
